@@ -11,12 +11,28 @@
 
 ## Repository Map
 
-原始碼尚未實作，目錄結構待確認。規劃中的分層與責任：
+分層以 import 方向強制：核心層任何模組都不得匯入 `api.py` 或 web 套件，由
+`tests/test_pipeline.py::test_core_package_does_not_pull_in_a_web_framework`
+在子行程中檢查。FastAPI 與 uvicorn 是 `pyproject.toml` 的選用相依 `[api]`，
+只安裝核心相依時整套函式庫仍可運作。
 
-- 核心層：VLM 推理（描述、診斷、成因）、約束映射、處方檢索。純函式，不匯入 web 相關套件。
-- 服務層：FastAPI 應用。只負責接收請求、呼叫核心層、序列化回應。不得含業務邏輯。
-- 前端層：靜態頁面，呼叫服務層 API。技術待確認（建議無 build step）。
-- 測試與實驗位置：待確認。
+核心層：
+
+- `src/movement_coach/pipeline.py`：`MovementCoach` 進入點；`describe_movement`（階段一）與
+  `diagnose`/`prescribe_for`（階段二至四）刻意分開，讓使用者在中間修正動作描述。
+- `src/movement_coach/dataset.py`：`load_exercises` 驗證並索引資料集；`Exercise`、`ExerciseDatabase`。
+- `src/movement_coach/muscles.py`：`TARGET_MUSCLES`、`ALIASES`、`normalize`、`normalize_all`。
+- `src/movement_coach/prescribe.py`：`score`、`covers`、`prescribe`、`verify_grounded`。
+- `src/movement_coach/video.py`：`sample_frames`。
+- `src/movement_coach/vlm.py`：`OllamaVLM`、`Assessment` 與回覆解析。
+- `src/movement_coach/errors.py`：例外階層。
+
+介面層：
+
+- `src/movement_coach/api.py`：FastAPI 應用，唯一匯入 web 套件的模組。
+- `web/index.html`：單檔靜態前端，無 build step、無外部資源。
+
+測試：`tests/`，105 個測試，全部以 stub 取代模型服務，不需要 GPU。
 
 ## Components and Responsibilities
 
@@ -42,8 +58,15 @@
 3. 推論結果經約束映射轉為肌群集合，呼叫處方檢索。
 4. 服務層回傳診斷、弱點肌群（含無對應項）與處方（含 `instruction_steps`），前端分區顯示。
 
-- Interface：核心層為 Python 函式；服務層為 HTTP API（端點設計待確認）；前端為網頁。
-- Data model / state：待確認。影片在請求之間的保存方式與清理策略未定。
+- Interface：
+  - 核心層：`MovementCoach.describe_movement(video)`、`.diagnose(video, description=, equipment=, max_items=)`、
+    `.prescribe_for(assessment, ...)`、`.check_ready()`；`format_report(diagnosis)` 產生文字報告。
+  - 服務層：`GET /api/health`、`GET /api/equipment`、`POST /api/describe`（回傳 `token` 與描述）、
+    `POST /api/diagnose`（以 `token` 續作）、`DELETE /api/upload/{token}`。
+- Data model / state：`Assessment`（自由推理結果）→ `Diagnosis`（含 `weak_muscles`、`unmapped_causes`、
+  `prescription`）。上傳影片存於系統暫存目錄 `movement-coach-uploads/`，以隨機 token 命名，
+  每次新上傳時清除逾 `UPLOAD_TTL_SECONDS`（3600 秒）的舊檔。token 只接受單一檔名，
+  含路徑分隔字元者一律拒絕。
 
 ## Algorithm Design
 
@@ -125,17 +148,21 @@ VLM 自由推論的輸出還會產生資料集中不存在的詞（如 `erector 
 
 ### Commands
 
-```text
-待確認（尚未實作）
+```bash
+pytest                                                    # 105 個測試
+pytest -m real_db                                         # 只跑依賴真實資料集的斷言
+uvicorn movement_coach.api:app --host 127.0.0.1 --port 8000
 ```
 
 ### Data and Environment
 
 - Dataset：[exercises-dataset](https://github.com/hasaneyldrm/exercises-dataset) `data/exercises.json`，1,324 筆。版本固定於 commit `7455efae41b330c265e7cd4b78dfa848e7ce5ebd`（2026-07-16），SHA-256 `656634224b8977b99a6d765470ee123260d4979715eaa4e7c0b7c8bb0d79f93d`，取得指令見 `README.md`。程式碼與資料為 MIT；媒體檔版權屬 Gym visual，僅授權轉散布，本專案不使用媒體檔。資料集不納入版本控制。
-- Environment：待確認。
+- Environment：Ubuntu、Linux 6.17；conda 環境 `movement-coach`（Python 3.12.13）；
+  Ollama 於 Docker 容器提供 `qwen2.5vl:7b`；NVIDIA RTX 3070 8GB。
 - Baseline：尚未需要。
-- Metrics：目前只有一項可自動檢查——處方動作可由 `id` 在 `exercises.json` 中驗證存在。其餘待模組可執行後再定。
-- Reproducibility：待確認。
+- Metrics：目前只有一項可自動檢查——處方動作可由 `id` 在 `exercises.json` 中驗證存在。其餘待依實際輸出再定。
+- Reproducibility：檢索層為確定性演算法；VLM 階段可透過 `OllamaVLM(seed=...)` 指定 seed，
+  但跨模型或伺服器版本的重現性不保證。測試套件不依賴模型服務。
 
 ### 後續評估方向
 
@@ -147,19 +174,34 @@ VLM 自由推論的輸出還會產生資料集中不存在的詞（如 `erector 
 
 ### Critical Cases
 
-- [ ] 正常案例：資料庫內的健身動作（如深蹲），完整跑完四階段。
-- [ ] 邊界案例：資料庫外的動作（如跆拳道踢腿），流程完整產出診斷與處方，不因無法比對資料庫而中止。
-- [ ] 邊界案例：診斷結論無法映射（如「踝背屈受限」），明確標記無對應而非硬湊。
-- [ ] 邊界案例：核心層在無 FastAPI 環境下由腳本呼叫，功能完整。
-- [ ] 邊界案例：VLM 服務未啟動、影片解碼失敗、`exercises.json` 缺失，皆有明確回報且無靜默失敗。
-- [ ] 介面案例：網頁可完成上傳、修正動作描述、檢視診斷與處方的完整操作。
+- [x] 正常案例：四階段完整執行並產出接地處方（`test_prescribe_for_maps_causes_and_grounds_the_result`，另有真實模型實跑）。
+- [x] 邊界案例：資料庫外的動作，流程完整產出診斷與處方（`test_movement_outside_the_database_still_produces_a_prescription`；真實模型以拳擊影片實跑）。
+- [x] 邊界案例：診斷結論無法映射時明確標記無對應而非硬湊（`test_unmappable_causes_are_reported_verbatim`）。
+- [x] 邊界案例：核心層在無 FastAPI 環境下由腳本呼叫，功能完整（`test_core_package_does_not_pull_in_a_web_framework`，於子行程執行）。
+- [x] 邊界案例：VLM 服務未啟動、影片解碼失敗、`exercises.json` 缺失，皆有明確回報且無靜默失敗（`test_vlm.py`、`test_video.py`、`test_dataset.py`）。
+- [x] 邊界案例：處方含資料庫不存在的 id 時 `verify_grounded` 拒絕（`test_verify_grounded_rejects_an_unknown_id`）。
+- [ ] 介面案例：網頁完整操作流程尚未以自動化測試覆蓋；已手動驗證（見下）。
 
 ### Verification Status
 
-- 資料集稽核：**passed**（2026-08-09，對 `exercises.json` 1,324 筆實際統計，結果見下節）。可由本文件記載的數字重新驗證。
-- 正規化表覆蓋率：**passed**（2026-08-09，31/40 個詞可映射，按出現次數計 95.6%）。表格內容已完整記載於「肌群正規化表」，可重新驗證。
-- 集合覆蓋演算法原型：**初步觀察，非正式驗證**。2026-08-09 於 session 暫存區以 Python 執行，兩組情境皆能以 2–3 個動作覆蓋 4 個弱點肌群。**原型程式碼未保存，此結果目前無法重現**，實作後須以正式測試取代本條記錄。
-- 其他所有檢查：**not run**（尚未實作）。
+2026-08-09，conda 環境 `movement-coach`（Python 3.12.13）：
+
+- `pytest`：**passed**，105 passed in 0.37s。涵蓋詞彙正規化、資料集驗證、集合覆蓋、
+  影片取樣、VLM 回覆解析與傳輸失敗、pipeline 接地、分層檢查。
+- 資料集稽核：**passed**，對 `exercises.json` 1,324 筆實際統計，結果見下節。
+- 正規化表覆蓋率：**passed**，31/40 個詞可映射，按出現次數計 95.6%。已由
+  `test_secondary_muscle_coverage_over_real_dataset` 設為 ≥95% 的回歸門檻。
+- 端到端實跑（真實 `qwen2.5vl:7b`）：**passed**。對一段拳擊影片執行四階段約 10 秒完成，
+  產出 2 個處方動作（`1775`、`1685`），編號皆可在資料庫中驗證存在。該動作不在資料集內，
+  流程未中止。
+- HTTP 介面實跑：**passed**（手動）。`GET /api/health`、`GET /api/equipment`、
+  `POST /api/describe`（1.1 MB mp4 上傳）、`POST /api/diagnose`（含使用者修正描述、器材過濾）
+  皆回傳預期結果；`GET /` 回傳前端頁面。
+- 前端頁面：**not run**（無瀏覽器自動化測試；僅確認 HTTP 200 與內容型別）。
+- Format / lint / type check：**not run**（專案尚未設定這些工具）。
+- 打包（`python -m build`）：**not run**。
+
+不得把未實際執行的檢查記為通過。
 
 不得把未實際執行的檢查記為通過。
 
@@ -242,13 +284,13 @@ VLM 自由推論的輸出還會產生資料集中不存在的詞（如 `erector 
 
 ## Known Gaps
 
-- 全部程式碼尚未實作。處方檢索層的原型未保存，其結果目前無法重現。
-- 集合覆蓋演算法已知兩個缺陷（實測發現，尚未修正）：
-  1. `secondary_muscles` 權重 0.5 過鬆，短跑（`wind sprints`）被選為小腿訓練。
-  2. 未對類別大小正規化，`abs`（169 個動作）易被過度選中。
+- 影片只取樣 6 張均勻分布的畫面，關鍵動作可能落在取樣點之外。實測拳擊影片時
+  第一階段描述為「男子用毛巾擦臉」，屬取樣落點問題而非模型能力問題。
+  動作描述的人工修正步驟因此是必要設計，不是選配。
+- 輸出品質（診斷是否穩定、建議是否適切）尚未評估，方式待依實際輸出決定。
 - 正規化表有 9 個詞無對應 `target`，其中 `hip flexors` 出現 77 次，該肌群無法產出處方。
-- 輸出品質的評估方式未定，待模組可執行後再依實際輸出決定。
 - 是否需要 2D pose 作為 VLM 輔助輸入未決。
-- API 端點設計、影片在請求之間的保存與清理策略未定。
-- 前端技術未定。
-- VLM 推論服務、Python 版本、硬體需求皆未確認。
+- 前端無自動化測試，僅手動驗證過 HTTP 層。
+- 未設定 formatter、linter、type checker；打包從未實際執行。
+- 上傳影片的清理僅在新上傳時觸發，長期閒置的服務不會自行回收暫存檔。
+- 服務層為單一模組層級的 `MovementCoach` 實例，未考慮多工作行程下的資料集重複載入成本。

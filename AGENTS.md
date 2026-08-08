@@ -2,8 +2,8 @@
 
 - Project: `movement-coach`
 - Purpose: 從人體動作影片產出動作診斷與接地於真實資料庫的訓練處方。
-- Project type: data / algorithm（VLM 管線 + 檢索）
-- Primary language / runtime: Python（版本待確認）
+- Project type: library + Web/API service（核心為可匯入的 Python 套件，FastAPI 與前端為選用介面）
+- Primary language / runtime: Python `>=3.10`（見 `pyproject.toml`），開發/測試用 conda 環境 `movement-coach`（Python 3.12）
 - Requirements source: `docs/spec.md`
 - Design source: `docs/architecture.md`
 
@@ -11,21 +11,28 @@
 
 # Architecture Map
 
-- 入口與模組：待確認（尚未實作）
-- 規劃中的四階段：動作描述 → 問題評估 → 成因推論（以上為 VLM）→ 約束映射 + 處方檢索（確定性演算法）
-- 規劃中的分層：核心層（純 Python）← 服務層（FastAPI，薄 adapter）← 前端層（靜態頁面）
-- Data / external boundary：本機 VLM 推論服務（待確認）；`exercises.json`（1,324 筆，外部資料集）；輸入影片為本機檔案
+- `src/movement_coach/pipeline.py`：`MovementCoach` 進入點，串接四階段並產出 `Diagnosis`
+- `src/movement_coach/dataset.py`：載入與驗證 `exercises.json`，正規化 `secondary_muscles`
+- `src/movement_coach/muscles.py`：肌群詞彙正規化表（40+ 詞 → 19 個 `target`）
+- `src/movement_coach/prescribe.py`：計分、貪婪集合覆蓋、`verify_grounded` 接地驗證
+- `src/movement_coach/video.py`：影片取樣為 base64 JPEG
+- `src/movement_coach/vlm.py`：Ollama 客戶端；三段自由推理 + 一段約束映射
+- `src/movement_coach/errors.py`：例外階層，全部繼承 `MovementCoachError`
+- `src/movement_coach/api.py`：FastAPI 薄 adapter，**唯一**可匯入 web 套件的模組
+- `web/index.html`：靜態前端，無 build step
+- 四階段：動作描述 → 問題評估 → 成因推論（以上為 VLM，不受資料庫限制）→ 約束映射 + 處方檢索（確定性演算法）
+- Data / external boundary：本機 Ollama（`http://localhost:11434`，`qwen2.5vl:7b`）；`exercises.json`（1,324 筆，外部資料集，不納入版控）；輸入影片為本機檔案，暫存於系統暫存目錄
 - Detailed design and verification：`docs/architecture.md`
 
 # Commands and Verification
 
-- Install / setup: 待確認（尚未實作）
-- Run / develop: 待確認（尚未實作）
-- Format / lint: 待確認
-- Type / static check: 待確認
-- Unit / integration test: 待確認（尚未實作）
-- Build / package: 待確認
-- Benchmark（適用時）: 目前不適用。模組尚未實作，不預先設計實驗與指標；待端到端可執行後再依實際輸出決定
+- Install / setup: `conda create -y -n movement-coach python=3.12 && conda activate movement-coach && pip install -e ".[api]" pytest`；資料集下載見 `README.md`
+- Run / develop: `uvicorn movement_coach.api:app --host 127.0.0.1 --port 8000`；或直接 `import movement_coach` 當函式庫用
+- Format / lint: none confirmed（尚未設定 black/ruff）
+- Type / static check: none confirmed
+- Unit / integration test: `pytest`（105 個測試，不需要 GPU 或模型服務；`real_db` 標記的測試在資料集未下載時略過）
+- Build / package: `python -m build`（setuptools backend）— 待確認：從未實際執行過打包
+- Benchmark（適用時）: 目前不適用。輸出品質的評估方式待依實際輸出決定，不預先設計實驗與指標
 
 # Project-specific Rules
 
