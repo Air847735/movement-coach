@@ -1,0 +1,39 @@
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.local
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Logs and temporary files
+*.log
+tmp/
+temp/
+
+# Add language- and framework-specific generated files after initialization.
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 外部資料集（依 README 的固定 commit 下載，不納入版本控制）
+data/
+
+# 輸入影片與分析輸出（可能包含可識別個人，不得提交）
+uploads/
+outputs/
+*.mp4
+*.mov
+*.avi
+*.mkv
+
