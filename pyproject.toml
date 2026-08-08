@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "movement-coach"
+version = "0.1.0"
+description = "Diagnose human movement from a single-camera video and prescribe training exercises grounded in a real exercise database."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "opencv-python-headless>=4.8",
+    "requests>=2.31",
+]
+
+# Web 介面為選用相依。核心層不得匯入這些套件，見 AGENTS.md 的專案規則。
+[project.optional-dependencies]
+api = [
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+    "python-multipart>=0.0.9",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "real_db: asserts something about the downloaded exercises.json; skipped when absent",
+]

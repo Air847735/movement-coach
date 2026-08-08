@@ -1,0 +1,15 @@
+README.md
+pyproject.toml
+src/movement_coach/__init__.py
+src/movement_coach/dataset.py
+src/movement_coach/errors.py
+src/movement_coach/muscles.py
+src/movement_coach/pipeline.py
+src/movement_coach/prescribe.py
+src/movement_coach/video.py
+src/movement_coach/vlm.py
+src/movement_coach.egg-info/PKG-INFO
+src/movement_coach.egg-info/SOURCES.txt
+src/movement_coach.egg-info/dependency_links.txt
+src/movement_coach.egg-info/requires.txt
+src/movement_coach.egg-info/top_level.txt
