@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>movement-coach</title>
+<style>
+  :root {
+    --bg: #fbfbfa; --panel: #fff; --line: #e3e2df; --ink: #1d1c1a;
+    --muted: #6b6862; --accent: #7a5c3e; --warn: #8a5a2b; --bad: #9b3d3d;
+    --chip: #f0eeea;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #171614; --panel: #201f1c; --line: #35332f; --ink: #eceae6;
+      --muted: #9a958c; --accent: #c9a37a; --warn: #d3a06a; --bad: #d98a8a;
+      --chip: #2b2926;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2rem 1rem 4rem; background: var(--bg); color: var(--ink);
+    font: 15px/1.65 system-ui, -apple-system, "Noto Sans TC", sans-serif;
+  }
+  main { max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 .25rem; }
+  h2 { font-size: 1rem; margin: 0 0 .75rem; letter-spacing: .02em; }
+  .sub { color: var(--muted); margin: 0 0 2rem; font-size: .9rem; }
+  section {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 1.25rem; margin-bottom: 1rem;
+  }
+  section[hidden] { display: none; }
+  button {
+    font: inherit; padding: .5rem 1.1rem; border-radius: 7px; border: 1px solid var(--accent);
+    background: var(--accent); color: var(--bg); cursor: pointer;
+  }
+  button.ghost { background: transparent; color: var(--ink); border-color: var(--line); }
+  button:disabled { opacity: .5; cursor: default; }
+  input[type=text], input[type=file], select {
+    font: inherit; width: 100%; padding: .55rem .7rem; border-radius: 7px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--ink);
+  }
+  select[multiple] { height: 8.5rem; }
+  label { display: block; font-size: .85rem; color: var(--muted); margin: 0 0 .3rem; }
+  .row { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
+  .row > :first-child { flex: 1 1 18rem; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 1rem; }
+  ul { margin: .3rem 0 0; padding-left: 1.2rem; }
+  li { margin: .2rem 0; }
+  .chip {
+    display: inline-block; background: var(--chip); border-radius: 999px;
+    padding: .12rem .7rem; margin: .15rem .25rem .15rem 0; font-size: .85rem;
+  }
+  .note { color: var(--muted); font-size: .85rem; }
+  .warn { color: var(--warn); }
+  .bad { color: var(--bad); }
+  .banner {
+    border-radius: 8px; padding: .7rem .9rem; margin-bottom: 1rem;
+    border: 1px solid var(--line); font-size: .9rem;
+  }
+  .banner.err { border-color: var(--bad); color: var(--bad); }
+  details { border-top: 1px solid var(--line); padding: .6rem 0 0; margin-top: .6rem; }
+  details summary { cursor: pointer; color: var(--muted); font-size: .85rem; }
+  ol.steps { margin: .6rem 0 0; padding-left: 1.3rem; }
+  .rx { border: 1px solid var(--line); border-radius: 8px; padding: .9rem; margin-bottom: .7rem; }
+  .rx h3 { margin: 0 0 .2rem; font-size: 1rem; }
+  .spin::after {
+    content: ""; display: inline-block; width: .8em; height: .8em; margin-left: .5em;
+    border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%;
+    animation: spin .7s linear infinite; vertical-align: -.1em;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<main>
+  <h1>movement-coach</h1>
+  <p class="sub">上傳一段動作影片，取得問題診斷與訓練處方。處方動作全部來自動作資料庫，不由模型生成。</p>
+
+  <div id="status" class="banner">檢查服務狀態…</div>
+
+  <section id="uploadPane">
+    <h2>1 · 上傳影片</h2>
+    <div class="row">
+      <input type="file" id="video" accept="video/*">
+      <button id="uploadBtn" disabled>分析動作</button>
+    </div>
+    <p class="note" style="margin:.7rem 0 0">單機拍攝即可。含軀幹旋轉或身體離開拍攝平面的動作，診斷會不可靠。</p>
+  </section>
+
+  <section id="confirmPane" hidden>
+    <h2>2 · 確認動作</h2>
+    <label for="description">系統判斷的動作（不正確請直接修改）</label>
+    <input type="text" id="description">
+    <div class="grid" style="margin-top:1rem">
+      <div>
+        <label for="equipment">可用器材（不選＝不限）</label>
+        <select id="equipment" multiple></select>
+      </div>
+      <div>
+        <label for="maxItems">處方動作數上限</label>
+        <select id="maxItems">
+          <option>2</option><option>3</option><option selected>4</option><option>5</option>
+        </select>
+      </div>
+    </div>
+    <div class="row" style="margin-top:1rem">
+      <span></span>
+      <button id="diagnoseBtn">確認，開始診斷</button>
+      <button id="resetBtn" class="ghost">重新上傳</button>
+    </div>
+  </section>
+
+  <section id="resultPane" hidden>
+    <h2>3 · 診斷</h2>
+    <div id="diagnosis"></div>
+  </section>
+
+  <section id="rxPane" hidden>
+    <h2>4 · 訓練處方</h2>
+    <div id="prescription"></div>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let token = null;
+
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+async function call(url, options) {
+  const res = await fetch(url, options);
+  let body = null;
+  try { body = await res.json(); } catch { /* non-JSON error page */ }
+  if (!res.ok) {
+    const detail = body && body.detail ? body.detail : `HTTP ${res.status}`;
+    const stage = body && body.stage ? `（${body.stage} 階段）` : "";
+    throw new Error(detail + stage);
+  }
+  return body;
+}
+
+function busy(button, on, label) {
+  button.disabled = on;
+  button.classList.toggle("spin", on);
+  button.textContent = on ? label : button.dataset.label;
+}
+
+async function loadStatus() {
+  const bar = $("status");
+  try {
+    const info = await call("/api/health");
+    if (info.vlm_ok) {
+      bar.className = "banner";
+      bar.textContent = `就緒 · 動作資料庫 ${info.exercises} 筆 · 模型 ${info.model}`;
+      $("uploadBtn").disabled = false;
+    } else {
+      bar.className = "banner err";
+      bar.textContent = `模型服務不可用：${info.vlm_error}`;
+    }
+    const select = $("equipment");
+    for (const name of await call("/api/equipment")) {
+      select.add(new Option(name, name));
+    }
+  } catch (err) {
+    bar.className = "banner err";
+    bar.textContent = `無法連線到後端：${err.message}`;
+  }
+}
+
+$("uploadBtn").dataset.label = "分析動作";
+$("uploadBtn").onclick = async () => {
+  const file = $("video").files[0];
+  if (!file) { alert("請先選擇影片"); return; }
+  busy($("uploadBtn"), true, "分析中");
+  try {
+    const form = new FormData();
+    form.append("video", file);
+    const result = await call("/api/describe", { method: "POST", body: form });
+    token = result.token;
+    $("description").value = result.description;
+    $("confirmPane").hidden = false;
+    $("confirmPane").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  } catch (err) {
+    alert(`分析失敗：${err.message}`);
+  } finally {
+    busy($("uploadBtn"), false);
+  }
+};
+
+$("diagnoseBtn").dataset.label = "確認，開始診斷";
+$("diagnoseBtn").onclick = async () => {
+  busy($("diagnoseBtn"), true, "診斷中");
+  try {
+    const form = new FormData();
+    form.append("token", token);
+    form.append("description", $("description").value);
+    form.append("max_items", $("maxItems").value);
+    form.append("equipment",
+      [...$("equipment").selectedOptions].map((o) => o.value).join(","));
+    render(await call("/api/diagnose", { method: "POST", body: form }));
+  } catch (err) {
+    alert(`診斷失敗：${err.message}`);
+  } finally {
+    busy($("diagnoseBtn"), false);
+  }
+};
+
+$("resetBtn").onclick = async () => {
+  if (token) { try { await call(`/api/upload/${token}`, { method: "DELETE" }); } catch {} }
+  token = null;
+  $("video").value = "";
+  for (const id of ["confirmPane", "resultPane", "rxPane"]) $(id).hidden = true;
+};
+
+function render(data) {
+  const parts = [`<p><strong>動作：</strong>${esc(data.description)}</p>`];
+
+  if (!data.has_issues) {
+    parts.push("<p>未發現明顯問題。</p>");
+  } else {
+    parts.push("<p><strong>觀察到的問題</strong></p><ul>" +
+      data.problems.map((p) => `<li>${esc(p)}</li>`).join("") + "</ul>");
+    if (data.causes.length) {
+      parts.push('<p style="margin-top:1rem"><strong>可能相關的環節</strong>' +
+        ' <span class="note">（一般性關聯，不是診斷）</span></p><ul>' +
+        data.causes.map((c) => `<li>${esc(c)}</li>`).join("") + "</ul>");
+    }
+    if (data.weak_muscles.length) {
+      parts.push('<p style="margin-top:1rem"><strong>對應到可檢索的肌群</strong></p><p>' +
+        data.weak_muscles.map((m) => `<span class="chip">${esc(m)}</span>`).join("") + "</p>");
+    }
+    if (data.unmapped_causes.length) {
+      parts.push('<p class="warn" style="margin-top:.8rem">資料庫沒有對應動作的項目：' +
+        data.unmapped_causes.map(esc).join("、") + "</p>");
+    }
+  }
+  $("diagnosis").innerHTML = parts.join("");
+  $("resultPane").hidden = false;
+
+  const rx = data.prescription;
+  if (!rx || !rx.items.length) {
+    $("prescription").innerHTML =
+      `<p class="bad">無法產出處方：${esc(data.prescription_error || "沒有可對應的肌群")}</p>`;
+  } else {
+    $("prescription").innerHTML = rx.items.map((item, i) => `
+      <div class="rx">
+        <h3>${i + 1}. ${esc(item.name)}</h3>
+        <p class="note">器材：${esc(item.equipment)} · 覆蓋：${item.covers.map(esc).join("、")}</p>
+        <details>
+          <summary>作法（${item.steps.length} 步）</summary>
+          <ol class="steps">${item.steps.map((s) => `<li>${esc(s)}</li>`).join("")}</ol>
+        </details>
+      </div>`).join("") +
+      (rx.uncovered.length
+        ? `<p class="warn">未覆蓋的肌群：${rx.uncovered.map(esc).join("、")}</p>` : "") +
+      (rx.equipment_relaxed
+        ? '<p class="warn">所選器材下無合適動作，已放寬器材限制。</p>' : "");
+  }
+  $("rxPane").hidden = false;
+  $("rxPane").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+loadStatus();
+</script>
+</body>
+</html>
