@@ -282,12 +282,47 @@ uvicorn movement_coach.api:app --host 127.0.0.1 --port 8000
 - Alternatives：Gradio（開發最快，但介面框架與邏輯耦合度高，且元件模型限制流程設計）；純 CLI（無法滿足操作介面需求）。
 - Consequences：核心可被腳本或其他專案直接使用，介面可替換；代價是前端需自行實作，開發量高於 Gradio。驗證時需明確測試「核心層在無 FastAPI 環境下可完整呼叫」。
 
+### 首次評測結果（2026-08-09）
+
+`scripts/eval_recognition.py`，`34data/workout-vids` 每類抽 5 支共 110 支，
+`qwen2.5vl:7b`、seed 42、平均 4.8 秒/支。
+
+動作辨識（唯一有標準答案的階段）：
+
+- 完全命中 36/110 = **32.7%**；含部分命中 56/110 = **50.9%**。
+- 全對的類別：`deadlift`、`pull up`、`push-up`（各 5/5），`plank`、`squat`（4/5）。
+  都是體態差異大的全身動作。
+- 全錯的類別：`lat pulldown`、`tricep pushdown`（各 0/5）。但兩者的描述在機制上是對的
+  （「pulls down on a cable machine handle while seated」），只是沒有使用資料集的命名。
+  評分規則要求字面吻合，而本系統刻意輸出自由文字，因此此數字低估實際理解程度。
+- 真正的混淆：`leg extension` → 一致描述為 leg curl（相反動作）；`hip thrust` → bench press／
+  rowing machine；`russian twist` → sit-up。
+
+以下三項為評測發現的實際缺陷，尚未修正：
+
+1. **約束映射從不拒絕。** 12 份診斷全部是「無對應項目：—」。prompt 要求無法對應者略過，
+   但模型仍把「Lumbar spine mobility restrictions」「Posture control challenges」
+   「Balance and proprioception」等非肌力項目一律映射到某個肌群。接地率看似 100%，
+   實為過度映射，使「明確標記無對應」的保護機制失效。
+2. **`levator scapulae` 的字面陷阱。** 12 份診斷中出現 6 次，是第二高頻的對應肌群。
+   成因是自由推論常提到 scapular retraction／scapula，而 19 個允許詞中只有
+   `levator scapulae` 含 scapula 字樣，模型依字面相似度選它。正確對應應為 `traps` 或
+   `upper back`（rhomboids）。
+3. **錯誤映射被稀有度規則放大。** `levator scapulae` 在資料集中候選極少，處方檢索的
+   「稀有肌群優先」規則因此把它排在最前，導致 `side push neck stretch`（頸部伸展）
+   在 12 份處方中出現 6 次，成為臥推與飛鳥問題的首選處方。稀有度規則本身正確，
+   但會忠實放大上游的錯誤映射。
+
 ## Known Gaps
 
 - 影片只取樣 6 張均勻分布的畫面，關鍵動作可能落在取樣點之外。實測拳擊影片時
   第一階段描述為「男子用毛巾擦臉」，屬取樣落點問題而非模型能力問題。
   動作描述的人工修正步驟因此是必要設計，不是選配。
-- 輸出品質（診斷是否穩定、建議是否適切）尚未評估，方式待依實際輸出決定。
+- 約束映射過度映射，從不回報「無對應」；`levator scapulae` 因字面相似被誤選；
+  稀有度規則會放大這類誤選（見上節首次評測結果）。三者尚未修正。
+- 動作辨識完全命中率 32.7%。部分失分源自評分規則要求字面吻合，但也有真實混淆
+  （`leg extension` 與 leg curl）。
+- 診斷與處方的適切性仍無標準答案可評，只能人工判讀。
 - 正規化表有 9 個詞無對應 `target`，其中 `hip flexors` 出現 77 次，該肌群無法產出處方。
 - 是否需要 2D pose 作為 VLM 輔助輸入未決。
 - 前端無自動化測試，僅手動驗證過 HTTP 層。
