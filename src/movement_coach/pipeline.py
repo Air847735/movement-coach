@@ -120,12 +120,13 @@ class MovementCoach:
         Separated from `diagnose` so the mapping and retrieval half can be
         tested, or re-run with different equipment, without touching the GPU.
         """
-        proposed = self.vlm.map_to_muscles(assessment.causes) if assessment.causes else ()
-        weak, unmapped = normalize_all(proposed)
+        mapping = self.vlm.map_to_muscles(assessment.causes)
+        weak, unrecognised = normalize_all(mapping.proposed)
 
-        # Anything the mapping stage dropped entirely is still worth showing.
-        if assessment.causes and not proposed:
-            unmapped = list(assessment.causes)
+        # Two ways a cause can fail to reach retrieval: the model declined it,
+        # or it answered with something outside the searchable vocabulary.
+        # Both are reported, in that order, rather than silently dropped.
+        unmapped = list(mapping.declined) + unrecognised
 
         prescription: Prescription | None = None
         error: str | None = None

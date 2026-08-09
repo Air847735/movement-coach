@@ -13,11 +13,15 @@ import sys
 import pytest
 
 from movement_coach import MovementCoach, format_report
-from movement_coach.vlm import Assessment
+from movement_coach.vlm import Assessment, MuscleMapping
 
 
 class FakeVLM:
-    """Records what it was asked and returns scripted replies."""
+    """Records what it was asked and returns scripted replies.
+
+    ``mapped`` is what the constrained stage proposes; every cause it does not
+    account for is reported as declined, mirroring the real client.
+    """
 
     model = "fake"
 
@@ -44,7 +48,10 @@ class FakeVLM:
         return self._causes if problems else ()
 
     def map_to_muscles(self, causes):
-        return self._mapped if causes else ()
+        if not causes:
+            return MuscleMapping(proposed=(), declined=())
+        declined = tuple(causes[len(self._mapped):])
+        return MuscleMapping(proposed=self._mapped, declined=declined)
 
     def analyse(self, frames, description=None):
         resolved = description.strip() if description and description.strip() else self.describe(frames)

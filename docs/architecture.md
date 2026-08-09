@@ -298,7 +298,7 @@ uvicorn movement_coach.api:app --host 127.0.0.1 --port 8000
 - 真正的混淆：`leg extension` → 一致描述為 leg curl（相反動作）；`hip thrust` → bench press／
   rowing machine；`russian twist` → sit-up。
 
-以下三項為評測發現的實際缺陷，尚未修正：
+以下三項為評測發現的實際缺陷，**1 與 2 已修正，3 隨之消失**（見下節）：
 
 1. **約束映射從不拒絕。** 12 份診斷全部是「無對應項目：—」。prompt 要求無法對應者略過，
    但模型仍把「Lumbar spine mobility restrictions」「Posture control challenges」
@@ -313,15 +313,38 @@ uvicorn movement_coach.api:app --host 127.0.0.1 --port 8000
    在 12 份處方中出現 6 次，成為臥推與飛鳥問題的首選處方。稀有度規則本身正確，
    但會忠實放大上游的錯誤映射。
 
+### 約束映射改為逐項表態後的複測（2026-08-09）
+
+原本要求模型回傳一份肌肉清單，省略無法對應者。模型改為對每個項目各給一個答案，
+`none` 是明列的合法答案，並在指令中點出 `levator scapulae` 是頸部肌肉、
+`serratus anterior` 只用於肩胛前引。同 12 支影片、同 seed 複測：
+
+| 指標 | 修正前 | 修正後 |
+|---|---|---|
+| 有回報「無對應項目」的份數 | 0/12 | **9/12** |
+| `levator scapulae` 被選中次數 | 6 | **0** |
+| 處方含 `side push neck stretch` | 6 | **0** |
+| 能產出處方的份數 | 12/12 | 12/12 |
+
+被拒絕的項目確實都不是肌力問題：`Posture control challenges`、
+`Upper arm mobility limitations`、`Lumbar spine mobility`、
+`Pelvic tilt control problems`、`Shoulder joint mobility`。
+`Scapular retractor muscle weakness (e.g., rhomboids)` 現在對應到 `traps` 而非
+`levator scapulae`。拒絕變多並未使任何一份失去處方。
+
+根因記錄：模型把「交一份清單、省略不適用者」理解為逐項翻譯，傾向為每個輸入項目
+產生一個輸出，不願留白。讓「無對應」成為必須明講的答案，而非需要主動省略的動作，
+即可消除此傾向。
+
 ## Known Gaps
 
 - 影片只取樣 6 張均勻分布的畫面，關鍵動作可能落在取樣點之外。實測拳擊影片時
   第一階段描述為「男子用毛巾擦臉」，屬取樣落點問題而非模型能力問題。
   動作描述的人工修正步驟因此是必要設計，不是選配。
-- 約束映射過度映射，從不回報「無對應」；`levator scapulae` 因字面相似被誤選；
-  稀有度規則會放大這類誤選（見上節首次評測結果）。三者尚未修正。
-- 動作辨識完全命中率 32.7%。部分失分源自評分規則要求字面吻合，但也有真實混淆
-  （`leg extension` 與 leg curl）。
+- 動作辨識完全命中率 32.7%。部分失分源自評分規則要求字面吻合（`lat pulldown` 的
+  描述機制正確但未使用該名稱），但也有真實混淆：`leg extension` 一致被描述為
+  leg curl、`hip thrust` 被描述為 bench press、`russian twist` 被描述為 sit-up。
+- 約束映射的拒絕行為只在 12 支樣本上複測過，尚未確認是否會走向另一個極端（過度拒絕）。
 - 診斷與處方的適切性仍無標準答案可評，只能人工判讀。
 - 正規化表有 9 個詞無對應 `target`，其中 `hip flexors` 出現 77 次，該肌群無法產出處方。
 - 是否需要 2D pose 作為 VLM 輔助輸入未決。

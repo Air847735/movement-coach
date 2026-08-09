@@ -10,7 +10,7 @@ import pytest
 import requests
 
 from movement_coach.errors import VLMError
-from movement_coach.vlm import OllamaVLM, _bullets, _json_string_array
+from movement_coach.vlm import OllamaVLM, _bullets, _numbered_answers
 
 
 class _Response:
@@ -61,14 +61,21 @@ def test_bullet_parsing(text, expected):
 @pytest.mark.parametrize(
     "text, expected",
     [
-        ('["glutes", "abs"]', ("glutes", "abs")),
-        ('Here you go: ["quads"] hope that helps', ("quads",)),
-        ("- glutes\n- abs", ("glutes", "abs")),  # falls back to bullets
-        ("[not, valid, json]", ("[not, valid, json]",)),
+        ("1. glutes\n2. abs", {1: "glutes", 2: "abs"}),
+        ("1. glutes\n2. none", {1: "glutes", 2: None}),
+        ("1) glutes\n2 - abs", {1: "glutes", 2: "abs"}),
+        ("1. **glutes**\n2. `abs`", {1: "glutes", 2: "abs"}),
+        ("Here are the answers:\n1. quads\n2. N/A", {1: "quads", 2: None}),
+        ("1. glutes\n9. abs", {1: "glutes"}),  # out-of-range index ignored
     ],
 )
-def test_json_array_parsing_tolerates_prose_and_bad_json(text, expected):
-    assert _json_string_array(text) == expected
+def test_numbered_answer_parsing(text, expected):
+    assert _numbered_answers(text, expected=2) == expected
+
+
+def test_unanswered_items_are_absent_rather_than_guessed():
+    """A missing line must not become a match; the caller treats it as a decline."""
+    assert _numbered_answers("1. glutes", expected=3) == {1: "glutes"}
 
 
 # -- stages ----------------------------------------------------------------
@@ -102,7 +109,36 @@ def test_map_to_muscles_skips_the_call_when_there_are_no_causes(vlm, monkeypatch
         raise AssertionError("should not have called the model")
 
     monkeypatch.setattr("movement_coach.vlm.requests.post", explode)
-    assert vlm.map_to_muscles([]) == ()
+    result = vlm.map_to_muscles([])
+    assert result.proposed == () and result.declined == ()
+
+
+def test_map_to_muscles_keeps_declines_separate_from_matches(vlm, monkeypatch):
+    _stub_post(
+        monkeypatch,
+        _Response(payload={"response": "1. glutes\n2. none\n3. abs"}),
+    )
+    result = vlm.map_to_muscles(
+        ["gluteus medius weakness", "limited ankle dorsiflexion", "core stability"]
+    )
+    assert result.proposed == ("glutes", "abs")
+    assert result.declined == ("limited ankle dorsiflexion",)
+
+
+def test_an_item_the_model_ignored_counts_as_declined(vlm, monkeypatch):
+    """Regression: the previous prompt asked for a list, and the model answered
+    one muscle per item rather than omitting any, so nothing was ever declined."""
+    _stub_post(monkeypatch, _Response(payload={"response": "1. glutes"}))
+    result = vlm.map_to_muscles(["gluteus medius weakness", "balance and proprioception"])
+    assert result.proposed == ("glutes",)
+    assert result.declined == ("balance and proprioception",)
+
+
+def test_all_items_declined(vlm, monkeypatch):
+    _stub_post(monkeypatch, _Response(payload={"response": "1. none\n2. none"}))
+    result = vlm.map_to_muscles(["ankle mobility", "posture control"])
+    assert result.proposed == ()
+    assert result.declined == ("ankle mobility", "posture control")
 
 
 def test_analyse_uses_a_supplied_description_without_calling_describe(vlm, monkeypatch):
@@ -112,7 +148,7 @@ def test_analyse_uses_a_supplied_description_without_calling_describe(vlm, monke
         calls.append(json["prompt"])
         if "technically wrong" in json["prompt"]:
             return _Response(payload={"response": "- shallow depth"})
-        return _Response(payload={"response": "- glutes"})
+        return _Response(payload={"response": "- gluteus medius weakness"})
 
     monkeypatch.setattr("movement_coach.vlm.requests.post", fake_post)
     result = vlm.analyse(["frame"], "a user-corrected side kick")

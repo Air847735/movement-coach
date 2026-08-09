@@ -31,7 +31,7 @@ from .prescribe import (
     verify_grounded,
 )
 from .video import sample_frames
-from .vlm import Assessment, OllamaVLM
+from .vlm import Assessment, MuscleMapping, OllamaVLM
 
 __version__ = "0.1.0"
 
@@ -43,6 +43,7 @@ __all__ = [
     "ExerciseDatabase",
     "MovementCoach",
     "MovementCoachError",
+    "MuscleMapping",
     "OllamaVLM",
     "PrescribedExercise",
     "Prescription",

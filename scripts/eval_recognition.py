@@ -159,6 +159,21 @@ def run(args: argparse.Namespace) -> int:
     )
     coach.check_ready()
 
+    # The review sample is drawn from `pairs`, so skipping recognition keeps
+    # the same clips selected -- which is what makes a before/after comparison
+    # of the later stages meaningful.
+    if args.skip_recognition:
+        if not args.full:
+            print("--skip-recognition 需要搭配 --full", file=sys.stderr)
+            return 2
+        report = ["# 診斷／處方檢視", "", f"模型 `{coach.vlm.model}` · seed {args.seed}", ""]
+        report += list(_review_section(coach, pairs, args))
+        output = Path(args.output)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text("\n".join(report) + "\n", encoding="utf-8")
+        print(f"\n檢視表：{output}")
+        return 0
+
     print(f"辨識對照：{len(pairs)} 支影片，{len({p[0] for p in pairs})} 種動作\n")
 
     rows: List[List[str]] = []
@@ -299,6 +314,11 @@ def main() -> int:
     parser.add_argument("--dataset", default="data/exercises.json")
     parser.add_argument("--per-class", type=int, default=5, help="每類抽幾支，0 表示全部")
     parser.add_argument("--full", type=int, default=0, help="額外對幾支跑完整流程")
+    parser.add_argument(
+        "--skip-recognition",
+        action="store_true",
+        help="只跑 --full 的完整流程檢視，抽樣結果與完整執行時相同",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--temperature", type=float, default=0.1)
     parser.add_argument("--output", default="data/eval/report.md")

@@ -13,7 +13,6 @@ name a specific exercise (exercises come only from the database).
 
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Sequence
@@ -51,7 +50,7 @@ Rules:
 - Reply with 1 to 5 short items, one per line, starting each line with "- ".
 """
 
-_MAP_PROMPT = """Map each item below onto the closest muscle from the allowed list.
+_MAP_PROMPT = """Decide, for each numbered item below, which single muscle from the allowed list it refers to.
 
 Items:
 {items}
@@ -60,9 +59,13 @@ Allowed muscles (use these exact spellings):
 {vocabulary}
 
 Rules:
-- Only use muscles from the allowed list.
-- If an item is about mobility, motor control, or a muscle with no entry in the list, omit it. Do not substitute a nearby muscle.
-- Reply with a JSON array of strings and nothing else. Example: ["glutes", "abs"]
+- Answer every item on its own line, in the form "<number>. <answer>".
+- Each answer is exactly one muscle from the allowed list, or the word none.
+- Answer none when the item is about mobility, flexibility, balance, coordination, posture, or motor control rather than about a muscle being weak.
+- Answer none when the muscle the item refers to is not in the allowed list. Never substitute a nearby muscle. none is a normal and expected answer.
+- "levator scapulae" is a muscle of the neck. Choose it only for items about the neck. For scapular retraction choose traps or upper back.
+- "serratus anterior" is only for scapular protraction and overhead reaching.
+- Output nothing except the numbered lines.
 """
 
 
@@ -77,6 +80,21 @@ class Assessment:
     @property
     def has_issues(self) -> bool:
         return bool(self.problems)
+
+
+@dataclass(frozen=True)
+class MuscleMapping:
+    """Outcome of the constrained mapping stage, decision by decision.
+
+    ``declined`` carries the original wording of every cause the model judged
+    to have no muscle in the searchable vocabulary. Keeping declines explicit
+    is the point of the stage: an earlier version asked only for the list of
+    muscles, and the model answered one muscle per input item rather than
+    omitting any, which silently defeated the safeguard.
+    """
+
+    proposed: tuple[str, ...]
+    declined: tuple[str, ...]
 
 
 class OllamaVLM:
@@ -200,20 +218,33 @@ class OllamaVLM:
         )
         return _bullets(text)
 
-    def map_to_muscles(self, causes: Sequence[str]) -> tuple[str, ...]:
+    def map_to_muscles(self, causes: Sequence[str]) -> MuscleMapping:
         """Stage 4: push free-form causes onto the searchable vocabulary.
 
-        Returns the model's proposed terms; the caller still runs them through
-        `muscles.normalize_all`, which is what actually guarantees the result
-        is searchable.
+        Asks for a verdict per item so that "no muscle applies" is an answer
+        the model can give, rather than an omission it has to make. The
+        proposed terms still go through `muscles.normalize_all`, which is what
+        actually guarantees the result is searchable.
         """
         if not causes:
-            return ()
+            return MuscleMapping(proposed=(), declined=())
+
         prompt = _MAP_PROMPT.format(
-            items="\n".join(f"- {c}" for c in causes),
+            items="\n".join(f"{i}. {c}" for i, c in enumerate(causes, 1)),
             vocabulary="\n".join(f"- {v}" for v in vocabulary()),
         )
-        return _json_string_array(self._generate(prompt, None, "map"))
+        answers = _numbered_answers(self._generate(prompt, None, "map"), len(causes))
+
+        proposed: List[str] = []
+        declined: List[str] = []
+        for index, cause in enumerate(causes, 1):
+            answer = answers.get(index)
+            # An item the model skipped entirely is a decline, not a silent drop.
+            if answer is None:
+                declined.append(cause)
+            else:
+                proposed.append(answer)
+        return MuscleMapping(proposed=tuple(proposed), declined=tuple(declined))
 
     def analyse(self, frames: Sequence[str], description: str | None = None) -> Assessment:
         """Run stages 1-3 and return the free-form result."""
@@ -252,19 +283,25 @@ def _bullets(text: str) -> tuple[str, ...]:
     return tuple(items)
 
 
-def _json_string_array(text: str) -> tuple[str, ...]:
-    """Extract a JSON array of strings, tolerating surrounding prose.
+_NONE_ANSWERS = {"none", "n/a", "na", "-", "無", "none.", "no muscle"}
 
-    Falls back to bullet parsing rather than raising: an unparseable mapping
-    reply degrades into terms that `normalize_all` will simply report as
-    unmapped, which is the correct visible outcome.
+
+def _numbered_answers(text: str, expected: int) -> Dict[int, str | None]:
+    """Parse ``<n>. <answer>`` lines into ``{index: muscle or None}``.
+
+    ``None`` marks a decline. Items the reply never mentions are absent from
+    the result, and the caller treats those as declines too -- a missing answer
+    must not become a silent match.
     """
-    match = re.search(r"\[.*?\]", text, re.DOTALL)
-    if match:
-        try:
-            parsed = json.loads(match.group(0))
-        except json.JSONDecodeError:
-            parsed = None
-        if isinstance(parsed, list):
-            return tuple(str(item) for item in parsed if isinstance(item, (str, int, float)))
-    return _bullets(text)
+    answers: Dict[int, str | None] = {}
+    for line in text.splitlines():
+        match = re.match(r"\s*(\d+)\s*[.):-]\s*(.+?)\s*$", line)
+        if not match:
+            continue
+        index = int(match.group(1))
+        if not 1 <= index <= expected:
+            continue
+        # Strip any markup or trailing commentary the model added.
+        answer = re.sub(r"[*`_]", "", match.group(2)).strip().strip('".')
+        answers[index] = None if answer.lower() in _NONE_ANSWERS else answer
+    return answers
