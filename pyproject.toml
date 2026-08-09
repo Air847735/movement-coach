@@ -13,12 +13,20 @@ dependencies = [
     "requests>=2.31",
 ]
 
-# Web 介面為選用相依。核心層不得匯入這些套件，見 AGENTS.md 的專案規則。
+# 選用相依。核心的處方檢索不需要其中任何一項。
+# 核心層不得匯入 api 的套件，見 AGENTS.md 的專案規則。
 [project.optional-dependencies]
 api = [
     "fastapi>=0.110",
     "uvicorn>=0.27",
     "python-multipart>=0.0.9",
+]
+# 安裝方式見 docs/pose-setup.md：rtmlib 宣告相依非 headless 版 opencv，
+# 需以 --no-deps 安裝以免覆蓋 opencv-python-headless。
+pose = [
+    "rtmlib>=0.0.16",
+    "onnxruntime>=1.17",
+    "tqdm>=4.66",
 ]
 
 [tool.setuptools.packages.find]
