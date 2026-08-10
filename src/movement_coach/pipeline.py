@@ -24,6 +24,35 @@ from .video import DEFAULT_FRAME_COUNT, sample_frames
 from .vlm import Assessment, OllamaVLM
 
 
+def _measure_video(video_path: str | Path, model) -> str | None:
+    """Skeleton measurements for a clip, or ``None`` if unavailable.
+
+    Failures here are deliberately non-fatal: measurements make the assessment
+    better informed, but the pipeline predates them and still works without.
+    """
+    import cv2
+
+    from .metrics import measure
+    from .pose import angle_series
+
+    capture = cv2.VideoCapture(str(video_path))
+    try:
+        fps = capture.get(cv2.CAP_PROP_FPS) or 25.0
+        frames = []
+        while True:
+            ok, frame = capture.read()
+            if not ok:
+                break
+            frames.append(frame)
+    finally:
+        capture.release()
+
+    if not frames:
+        return None
+    metrics = measure(angle_series(model, frames), fps)
+    return metrics.describe() if metrics.reliable else None
+
+
 @dataclass(frozen=True)
 class Diagnosis:
     """Everything the pipeline produced for one video.
@@ -41,6 +70,7 @@ class Diagnosis:
     unmapped_causes: tuple[str, ...]
     prescription: Prescription | None
     prescription_error: str | None = None
+    measurements: str | None = None
 
     @property
     def has_issues(self) -> bool:
@@ -61,10 +91,31 @@ class MovementCoach:
         vlm: OllamaVLM | None = None,
         *,
         frame_count: int = DEFAULT_FRAME_COUNT,
+        measure_pose: bool = True,
     ) -> None:
         self.database = database
         self.vlm = vlm or OllamaVLM()
         self.frame_count = frame_count
+        self.measure_pose = measure_pose
+        self._pose_model = None
+
+    def _pose(self):
+        """Load the pose model on first use, or disable measurement if absent.
+
+        The ``pose`` extra is optional, so a missing dependency downgrades the
+        pipeline to frames-only rather than failing.
+        """
+        if not self.measure_pose:
+            return None
+        if self._pose_model is None:
+            try:
+                from .pose import build_pose_model
+
+                self._pose_model = build_pose_model()
+            except ImportError:
+                self.measure_pose = False
+                return None
+        return self._pose_model
 
     @classmethod
     def from_path(
@@ -105,7 +156,11 @@ class MovementCoach:
         otherwise leave nothing available.
         """
         frames = sample_frames(video_path, count=self.frame_count)
-        assessment = self.vlm.analyse(frames, description)
+
+        model = self._pose()
+        measurements = _measure_video(video_path, model) if model else None
+
+        assessment = self.vlm.analyse(frames, description, measurements)
         return self.prescribe_for(assessment, equipment=equipment, max_items=max_items)
 
     def prescribe_for(
@@ -149,6 +204,7 @@ class MovementCoach:
             unmapped_causes=tuple(unmapped),
             prescription=prescription,
             prescription_error=error,
+            measurements=assessment.measurements,
         )
 
 
@@ -159,6 +215,11 @@ def format_report(diagnosis: Diagnosis, language: str = DEFAULT_LANGUAGE) -> str
     if not diagnosis.has_issues:
         lines.append("未發現明顯問題。")
         return "\n".join(lines)
+
+    if diagnosis.measurements:
+        lines.append("骨架量測：")
+        lines.extend(f"  {line}" for line in diagnosis.measurements.splitlines())
+        lines.append("")
 
     lines.append("問題：")
     lines.extend(f"  - {problem}" for problem in diagnosis.problems)

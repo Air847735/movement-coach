@@ -291,6 +291,10 @@ def _review_section(
             f"### {index}. {path.name}",
             "",
             f"- 標籤：`{label}`",
+        ]
+        if result.measurements:
+            lines.append("- 骨架量測：" + " / ".join(result.measurements.splitlines()))
+        lines += [
             "- 問題：" + ("；".join(result.problems) if result.problems else "未發現"),
             "- 自由推論：" + ("；".join(result.causes) if result.causes else "—"),
             "- 對應肌群：" + (", ".join(sorted(result.weak_muscles)) or "—"),

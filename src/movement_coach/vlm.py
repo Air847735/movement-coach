@@ -33,10 +33,22 @@ Name the movement in one short sentence. Any human movement is possible: a gym e
 Reply with the sentence only, no preamble."""
 
 _ASSESS_PROMPT = """The frames show, in order, one person performing: {description}
-
+{measurements}
 Describe what is technically wrong or suboptimal about how this person performs the movement. Be specific about body position and joint angles you can actually see. If a judgement would require an angle the camera cannot show, say so instead of guessing.
 
 Reply with 1 to 4 short bullet points, one problem per line, starting each line with "- ". If the execution looks sound, reply exactly: NO ISSUES"""
+
+_MEASUREMENT_BLOCK = """
+A pose estimator measured these joint angles across the whole clip, not just the frames shown:
+
+{measurements}
+
+Use these numbers where they apply, and cite the figure when you do. They supplement the frames rather than replace them: judge everything they do not cover from what you see, and do not invent a figure for anything not listed.
+
+The estimator watches from one camera, so a limb hidden behind the body is guessed. A left/right difference beyond about 30° usually means the far side was not clearly visible, not that the person is that asymmetric — treat it as missing data rather than as a fault to report.
+
+Measurements looking normal is not by itself proof the movement was performed well; keep assessing posture, alignment and control from the frames.
+"""
 
 _CAUSES_PROMPT = """A person performing "{description}" shows these problems:
 
@@ -71,11 +83,17 @@ Rules:
 
 @dataclass(frozen=True)
 class Assessment:
-    """Result of the three free-form reasoning stages."""
+    """Result of the three free-form reasoning stages.
+
+    ``measurements`` records the skeleton-derived text the assessment was given,
+    or ``None`` when it ran on frames alone -- kept so a diagnosis can be traced
+    back to the facts it was handed.
+    """
 
     description: str
     problems: tuple[str, ...]
     causes: tuple[str, ...]
+    measurements: str | None = None
 
     @property
     def has_issues(self) -> bool:
@@ -199,10 +217,27 @@ class OllamaVLM:
         """
         return _first_line(self._generate(_DESCRIBE_PROMPT, frames, "describe"))
 
-    def assess(self, frames: Sequence[str], description: str) -> tuple[str, ...]:
-        """Stage 2: list observable execution problems."""
+    def assess(
+        self,
+        frames: Sequence[str],
+        description: str,
+        measurements: str | None = None,
+    ) -> tuple[str, ...]:
+        """Stage 2: list observable execution problems.
+
+        ``measurements`` is optional skeleton-derived text. Supplying it turns
+        joint travel, left/right difference and repetition count from things
+        the model has to estimate off a handful of stills into stated facts.
+        """
+        block = (
+            _MEASUREMENT_BLOCK.format(measurements=measurements.strip())
+            if measurements and measurements.strip()
+            else ""
+        )
         text = self._generate(
-            _ASSESS_PROMPT.format(description=description), frames, "assess"
+            _ASSESS_PROMPT.format(description=description, measurements=block),
+            frames,
+            "assess",
         )
         if "NO ISSUES" in text.upper():
             return ()
@@ -246,12 +281,26 @@ class OllamaVLM:
                 proposed.append(answer)
         return MuscleMapping(proposed=tuple(proposed), declined=tuple(declined))
 
-    def analyse(self, frames: Sequence[str], description: str | None = None) -> Assessment:
+    def analyse(
+        self,
+        frames: Sequence[str],
+        description: str | None = None,
+        measurements: str | None = None,
+    ) -> Assessment:
         """Run stages 1-3 and return the free-form result."""
-        resolved = description.strip() if description and description.strip() else self.describe(frames)
-        problems = self.assess(frames, resolved)
+        resolved = (
+            description.strip()
+            if description and description.strip()
+            else self.describe(frames)
+        )
+        problems = self.assess(frames, resolved, measurements)
         causes = self.infer_causes(resolved, problems)
-        return Assessment(description=resolved, problems=problems, causes=causes)
+        return Assessment(
+            description=resolved,
+            problems=problems,
+            causes=causes,
+            measurements=measurements,
+        )
 
 
 # -- reply parsing ---------------------------------------------------------

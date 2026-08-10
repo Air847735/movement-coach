@@ -61,7 +61,15 @@ _TRIPLES: Tuple[Tuple[int, int, int], ...] = (
 TRAJECTORY_POINTS = 16
 
 #: Keypoint confidence below which a joint is treated as unobserved.
-MIN_CONFIDENCE = 0.3
+#:
+#: Filmed from one side, the far limb is occluded and the detector still
+#: returns a keypoint for it -- a plausible guess with middling confidence.
+#: Those guesses swing frame to frame and invent range of motion: at 0.3 a
+#: seated leg extension reported the elbow as its largest mover and a bench
+#: press reported 93 degrees of hip travel. At 0.5 both artefacts disappear
+#: while the real movement is retained; at 0.65 genuine joints start dropping
+#: out (a squat kept only one knee).
+MIN_CONFIDENCE = 0.5
 
 #: A clip needs this fraction of frames with a usable skeleton to be summarised.
 MIN_USABLE_FRACTION = 0.5
